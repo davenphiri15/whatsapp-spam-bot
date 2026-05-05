@@ -122,7 +122,7 @@ def format_whatsapp_reply(verdict: dict) -> str:
             f"such as EcoCash, a bank, or ZIMRA, contact them directly "
             f"using the number on their official website — "
             f"not the number in this message.\n\n"
-            f"— Zim Phishing Shield"
+            
         )
 
     return (
