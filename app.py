@@ -106,7 +106,7 @@ def format_whatsapp_reply(verdict: dict) -> str:
             "⚠️ Service temporarily unavailable.\n\n"
             "We could not classify your message right now. "
             "Please try again in a moment.\n\n"
-            "— Zim Phishing Shield"
+            
         )
 
     if label == "spam":
@@ -132,7 +132,7 @@ def format_whatsapp_reply(verdict: dict) -> str:
         f"• Never share OTPs or PINs with anyone\n"
         f"• When in doubt, contact the sender directly\n"
         f"• Scammers constantly improve their techniques\n\n"
-        f"— Zim Phishing Shield"
+        
     )
 
 
