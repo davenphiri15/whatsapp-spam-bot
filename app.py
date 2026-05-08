@@ -9,6 +9,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 app    = FastAPI()
 
+TRUSTED_CONTACTS = {
+    "+263785544904",
+    "+263776858078",
+    "+263774756502",
+}
+
 SPACE_NAME = os.getenv("SPACE_NAME", "viperDEE/spam-detector-zim")
 hf_client  = None
 try:
@@ -42,8 +48,11 @@ def classify(text: str) -> dict:
             score = float(result[label])
         else:
             return {"label":"error","score":0.0,"latency_ms":0}
-        return {"label":label,"score":score,
-                "latency_ms":int((time.time()-start)*1000)}
+        return {
+            "label":      label,
+            "score":      score,
+            "latency_ms": int((time.time()-start)*1000),
+        }
     except Exception as e:
         logger.error(f"Classify error: {e}")
         return {"label":"error","score":0.0,"latency_ms":0}
@@ -73,6 +82,7 @@ def save_for_retraining(user_id, message, correct_label):
             "correct_label":   correct_label,
             "source":          "user_feedback",
         }).execute()
+        logger.info(f"Saved to retraining queue from {user_id}")
     except Exception as e:
         logger.error(f"Retraining queue error: {e}")
 
@@ -80,7 +90,11 @@ def format_reply(verdict: dict) -> str:
     label = verdict["label"]
     score = verdict["score"]
     if label == "error":
-        return "⚠️ Service temporarily unavailable. Please try again.\n\n— Zim Phishing Shield"
+        return (
+            "⚠️ Service temporarily unavailable.\n"
+            "Please try again in a moment.\n\n"
+            "— Zim Phishing Shield"
+        )
     if label == "spam":
         return (
             f"🚨 *LIKELY SPAM / PHISHING*\n"
@@ -88,8 +102,10 @@ def format_reply(verdict: dict) -> str:
             f"🚫 Do NOT click any links\n"
             f"🚫 Do NOT share your OTP or PIN\n"
             f"🚫 Do NOT send money or airtime\n\n"
+            f"If this message claims to be from a real institution,\n"
+            f"contact them directly through their official number.\n\n"
             f"Reply *WRONG* if this verdict is incorrect.\n"
-            
+            f"— Zim Phishing Shield"
         )
     return (
         f"✅ *LIKELY LEGITIMATE*\n"
@@ -98,7 +114,7 @@ def format_reply(verdict: dict) -> str:
         f"• Never share OTPs or PINs with anyone\n"
         f"• When in doubt, contact the sender directly\n\n"
         f"Reply *WRONG* if this verdict is incorrect.\n"
-        
+        f"— Zim Phishing Shield"
     )
 
 @app.post("/whatsapp", response_class=PlainTextResponse)
@@ -106,43 +122,76 @@ async def whatsapp(Body: str = Form(...), From: str = Form(...)):
     body = Body.strip()
     logger.info(f"Message from {From}: {body[:80]}")
 
-    if body.upper() in ("WRONG","INCORRECT","NO"):
-        prev = last_message.get(From)
-        if prev:
-            old   = prev["verdict"]["label"]
-            new   = "ham" if old == "spam" else "spam"
-            save_for_retraining(From, prev["message"], new)
+    if body.upper() in ("WRONG", "INCORRECT", "NO"):
+        if From not in TRUSTED_CONTACTS:
             reply = (
-                f"✅ Thank you! Recorded as *{new.upper()}*.\n"
-                f"This helps improve our model.\n\n— Zim Phishing Shield"
+                "🔒 Verdict corrections are restricted to authorised contacts only.\n\n"
+                "— Zim Phishing Shield"
             )
         else:
-            reply = "No previous message found to correct."
-        twiml = f'<?xml version="1.0" encoding="UTF-8"?><Response><Message>{reply}</Message></Response>'
+            prev = last_message.get(From)
+            if prev:
+                old_label = prev["verdict"]["label"]
+                new_label = "ham" if old_label == "spam" else "spam"
+                save_for_retraining(From, prev["message"], new_label)
+                log_to_db(
+                    "whatsapp", From,
+                    prev["message"],
+                    {"label":"corrected","score":1.0},
+                    feedback="incorrect"
+                )
+                reply = (
+                    f"✅ Correction recorded.\n"
+                    f"Message re-labelled as *{new_label.upper()}*.\n"
+                    f"Thank you — this helps improve the model.\n\n"
+                    f"— Zim Phishing Shield"
+                )
+            else:
+                reply = (
+                    "No previous message found to correct.\n"
+                    "Send a message first, then reply WRONG to correct it.\n\n"
+                    "— Zim Phishing Shield"
+                )
+        twiml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            f"<Response><Message>{reply}</Message></Response>"
+        )
         return PlainTextResponse(content=twiml, media_type="application/xml")
 
-    if body.upper() in ("CORRECT","YES","RIGHT"):
-        log_to_db("whatsapp", From,
-                  last_message.get(From, {}).get("message",""),
-                  {"label":"confirmed","score":1.0}, feedback="correct")
-        reply = "✅ Great! Glad the verdict was accurate. Stay safe!"
-        twiml = f'<?xml version="1.0" encoding="UTF-8"?><Response><Message>{reply}</Message></Response>'
+    if body.upper() in ("CORRECT", "YES", "RIGHT"):
+        if From in TRUSTED_CONTACTS:
+            prev = last_message.get(From)
+            if prev:
+                log_to_db(
+                    "whatsapp", From,
+                    prev["message"],
+                    {"label":"confirmed","score":1.0},
+                    feedback="correct"
+                )
+        reply = "✅ Thank you for the confirmation. Stay safe!\n\n— Zim Phishing Shield"
+        twiml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            f"<Response><Message>{reply}</Message></Response>"
+        )
         return PlainTextResponse(content=twiml, media_type="application/xml")
 
     verdict = classify(body)
     log_to_db("whatsapp", From, body, verdict)
     last_message[From] = {"message": body, "verdict": verdict}
-    reply  = format_reply(verdict)
-    twiml  = f'<?xml version="1.0" encoding="UTF-8"?><Response><Message>{reply}</Message></Response>'
+    reply = format_reply(verdict)
+    twiml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f"<Response><Message>{reply}</Message></Response>"
+    )
     return PlainTextResponse(content=twiml, media_type="application/xml")
 
 @app.post("/classify", response_class=JSONResponse)
 async def classify_api(request: Request):
     body   = await request.json()
-    text   = body.get("text","").strip()
-    source = body.get("source","api")
+    text   = body.get("text", "").strip()
+    source = body.get("source", "api")
     if not text:
-        return JSONResponse({"error":"No text"}, status_code=400)
+        return JSONResponse({"error": "No text provided"}, status_code=400)
     verdict = classify(text)
     log_to_db(source, None, text, verdict)
     return JSONResponse({
@@ -150,6 +199,24 @@ async def classify_api(request: Request):
         "confidence": verdict["score"],
         "latency_ms": verdict.get("latency_ms"),
     })
+
+@app.get("/stats", response_class=JSONResponse)
+async def stats():
+    if not db:
+        return JSONResponse({"error": "DB not configured"}, status_code=503)
+    try:
+        total = db.table("classifications").select("id", count="exact").execute()
+        spam  = db.table("classifications").select("id", count="exact").eq("predicted_label","spam").execute()
+        ham   = db.table("classifications").select("id", count="exact").eq("predicted_label","ham").execute()
+        queue = db.table("retraining_queue").select("id", count="exact").execute()
+        return JSONResponse({
+            "total_classifications": total.count,
+            "spam_detected":         spam.count,
+            "ham_detected":          ham.count,
+            "retraining_queue":      queue.count,
+        })
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.get("/", response_class=JSONResponse)
 async def health():
