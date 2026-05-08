@@ -105,7 +105,7 @@ def format_reply(verdict: dict) -> str:
             f"If this message claims to be from a real institution,\n"
             f"contact them directly through their official number.\n\n"
             f"Reply *WRONG* if this verdict is incorrect.\n"
-            f"— Zim Phishing Shield"
+            
         )
     return (
         f"✅ *LIKELY LEGITIMATE*\n"
@@ -114,7 +114,7 @@ def format_reply(verdict: dict) -> str:
         f"• Never share OTPs or PINs with anyone\n"
         f"• When in doubt, contact the sender directly\n\n"
         f"Reply *WRONG* if this verdict is incorrect.\n"
-        f"— Zim Phishing Shield"
+        
     )
 
 @app.post("/whatsapp", response_class=PlainTextResponse)
@@ -126,7 +126,7 @@ async def whatsapp(Body: str = Form(...), From: str = Form(...)):
         if From not in TRUSTED_CONTACTS:
             reply = (
                 "🔒 Verdict corrections are restricted to authorised contacts only.\n\n"
-                "— Zim Phishing Shield"
+                
             )
         else:
             prev = last_message.get(From)
@@ -144,13 +144,13 @@ async def whatsapp(Body: str = Form(...), From: str = Form(...)):
                     f"✅ Correction recorded.\n"
                     f"Message re-labelled as *{new_label.upper()}*.\n"
                     f"Thank you — this helps improve the model.\n\n"
-                    f"— Zim Phishing Shield"
+                    
                 )
             else:
                 reply = (
                     "No previous message found to correct.\n"
                     "Send a message first, then reply WRONG to correct it.\n\n"
-                    "— Zim Phishing Shield"
+                    
                 )
         twiml = (
             '<?xml version="1.0" encoding="UTF-8"?>'
